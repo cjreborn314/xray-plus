@@ -1,0 +1,9 @@
+[Unit]
+Description=Check and failover Xray Reality dest
+After=network-online.target xray.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/reality-dest-check.sh
+Nice=10

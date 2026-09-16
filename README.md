@@ -9,6 +9,7 @@ Xray 安装与运维脚本。当前推荐方案是 **VLESS + Reality + Vision**�
 ```text
 xray-plus.sh                 # 旧版一键安装菜单（hijk，多种协议）
 scripts/xray.sh              # Reality 节点：查看 / 轮换导入链接
+scripts/reality-dest-check.sh # 伪装站健康检查与自动切换
 scripts/install-xray-ws.sh   # 旧方案：安装 VLESS + WS + TLS
 scripts/update-vless-uuid.sh # 旧方案：轮换 WS 节点 UUID
 templates/config.json        # Reality + Vision 服务端配置模板
@@ -16,6 +17,8 @@ templates/99-network-optimize.conf
 templates/nginx.conf
 templates/nginx-site.conf    # Reality 占用 443 后，nginx 只听 80
 templates/sshd-hardening.conf
+templates/reality-dest-check.service
+templates/reality-dest-check.timer
 ```
 
 密钥、UUID、证书不会放进仓库。`templates/config.json` 里是占位符。
@@ -82,6 +85,23 @@ ln -sfn /root/xray.sh /root/update-vless.sh
 ```
 
 链接默认指纹是 **firefox**。V2rayU 上 **不要用 chrome**（会走 X25519MLKEM768，Reality 校验失败，日志里是 `EOF`）。
+
+### 6. 伪装站健康检查
+
+每 10 分钟检测当前 `dest` 是否还能 TLS1.3 + HTTP/2。连续失败则自动换成候选站点（Google / Microsoft / Samsung 等），并保留原来的 `serverNames`，**已导入的客户端 SNI 一般不用改**。
+
+```bash
+cp scripts/reality-dest-check.sh /usr/local/sbin/reality-dest-check.sh
+chmod 700 /usr/local/sbin/reality-dest-check.sh
+cp templates/reality-dest-check.service templates/reality-dest-check.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now reality-dest-check.timer
+```
+
+```bash
+journalctl -u reality-dest-check -n 50 --no-pager
+systemctl list-timers reality-dest-check.timer
+```
 
 ## 客户端（V2rayU 5.x）
 
