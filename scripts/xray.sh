@@ -16,6 +16,17 @@ detect_address() {
         || hostname -I 2>/dev/null | awk '{print $1}'
 }
 
+detect_address_v6() {
+    if [[ -n "${XRAY_ADDRESS_V6:-}" ]]; then
+        printf '%s\n' "$XRAY_ADDRESS_V6"
+        return
+    fi
+    ip -6 addr show scope global 2>/dev/null \
+        | awk '/inet6/ && $2 !~ /^fe80:/ {print $2}' \
+        | cut -d/ -f1 \
+        | head -n 1
+}
+
 usage() {
     cat <<'USAGE'
 用法：
@@ -30,8 +41,9 @@ usage() {
       显示帮助。
 
 可用环境变量：
-  XRAY_ADDRESS   导入链接里的服务器地址（默认自动探测公网 IPv4）
-  REMARK         链接备注名（默认 Reality-Vision）
+  XRAY_ADDRESS      导入链接里的 IPv4 地址（默认自动探测公网 IPv4）
+  XRAY_ADDRESS_V6   导入链接里的 IPv6 地址（默认取第一块网卡的全局 IPv6）
+  REMARK            链接备注名（默认 Reality-Vision）
 USAGE
 }
 
@@ -106,30 +118,55 @@ PY
     [[ -n "$FLOW" ]] || FLOW="xtls-rprx-vision"
     [[ -n "$XRAY_PORT" ]] || XRAY_PORT="$PORT_FALLBACK"
 
-    PUBLIC_KEY="$("$XRAY_BIN" x25519 -i "$PRIVATE_KEY" | awk -F": " "/PublicKey/{print \$2; exit}")"
+    PUBLIC_KEY="$("$XRAY_BIN" x25519 -i "$PRIVATE_KEY" | awk -F": " "/PublicKey|Password/{print \$2; exit}")"
     [[ -n "$PUBLIC_KEY" ]] || die "无法从 privateKey 计算出 publicKey"
+
+    ADDRESS_V6="$(detect_address_v6 || true)"
 }
 
 build_vless_link() {
+    local host="$1"
+    local remark="$2"
     local encoded_sni encoded_name encoded_spx
     encoded_sni="$(urlencode "$SNI")"
-    encoded_name="$(urlencode "$REMARK")"
+    encoded_name="$(urlencode "$remark")"
     encoded_spx="$(urlencode "/")"
-    VLESS_LINK="vless://${UUID}@${ADDRESS}:${XRAY_PORT}?encryption=none&flow=${FLOW}&security=reality&sni=${encoded_sni}&fp=firefox&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&spx=${encoded_spx}&type=${NETWORK}#${encoded_name}"
+    if [[ "$host" == *:* ]]; then
+        host="[${host}]"
+    fi
+    printf 'vless://%s@%s:%s?encryption=none&flow=%s&security=reality&sni=%s&fp=firefox&pbk=%s&sid=%s&spx=%s&type=%s#%s\n' \
+        "$UUID" "$host" "$XRAY_PORT" "$FLOW" "$encoded_sni" "$PUBLIC_KEY" "$SHORT_ID" "$encoded_spx" "$NETWORK" "$encoded_name"
 }
 
 show_link() {
     read_node_info
-    build_vless_link
+    VLESS_LINK="$(build_vless_link "$ADDRESS" "$REMARK")"
+    VLESS_LINK_V6=""
+    if [[ -n "${ADDRESS_V6:-}" ]]; then
+        VLESS_LINK_V6="$(build_vless_link "$ADDRESS_V6" "${REMARK}-IPv6")"
+    fi
 
     cat <<EOF
 
 当前 Reality 导入链接：
 
 $VLESS_LINK
+EOF
+
+    if [[ -n "$VLESS_LINK_V6" ]]; then
+        cat <<EOF
+
+IPv6 备用链接：
+
+$VLESS_LINK_V6
+EOF
+    fi
+
+    cat <<EOF
 
 参数：
   地址        $ADDRESS
+  IPv6        ${ADDRESS_V6:-无}
   端口        $XRAY_PORT
   UUID        $UUID
   flow        $FLOW

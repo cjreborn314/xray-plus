@@ -1,0 +1,12 @@
+[Unit]
+Description=Clamp TCP MSS for 6in4 IPv6 tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ipv6-mss-clamp.sh ipv6net 1360
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
