@@ -1,22 +1,24 @@
 # xray-plus
 
-Xray 安装与运维脚本。当前推荐方案是 **VLESS + Reality + Vision**；仓库同时保留旧的一键安装脚本和 VLESS + WS + TLS 工具。
+Xray 安装与运维脚本。直连 IP 能用时推荐 **VLESS + Reality + Vision**；IPv4 被按 IP 干扰后改走 **Cloudflare + VLESS + WS/gRPC**（客户端连 CDN，不连源站 IP）。仓库同时保留旧的一键安装脚本。
 
 请仅在合法合规的前提下使用。
 
 ## 仓库结构
 
 ```text
-xray-plus.sh                 # 旧版一键安装菜单（hijk，多种协议）
-scripts/xray.sh              # Reality 节点：查看 / 轮换导入链接
-scripts/reality-dest-check.sh # 伪装站健康检查与自动切换
-scripts/install-xray-ws.sh   # 旧方案：安装 VLESS + WS + TLS
-scripts/update-vless-uuid.sh # 旧方案：轮换 WS 节点 UUID
-scripts/ipv6-mss-clamp.sh    # 可选：6in4 隧道 TCP MSS 夹紧
-templates/config.json        # Reality + Vision 服务端配置模板（listen ::）
+xray-plus.sh                   # 旧版一键安装菜单（hijk，多种协议）
+scripts/xray.sh                # Reality 节点：查看 / 轮换导入链接
+scripts/reality-dest-check.sh  # 伪装站健康检查与自动切换
+scripts/install-xray-ws.sh     # 旧方案：直连源站的 VLESS + WS + TLS
+scripts/update-vless-uuid.sh   # 旧方案：轮换 WS 节点 UUID
+scripts/ipv6-mss-clamp.sh      # 可选：6in4 隧道 TCP MSS 夹紧
+templates/config.json          # Reality + Vision 服务端配置模板（listen ::）
+templates/config-cf-ws-grpc.json # Cloudflare 回源：本机 WS + gRPC
 templates/99-network-optimize.conf
-templates/nginx.conf
-templates/nginx-site.conf    # Reality 占用 443 后，nginx 只听 80
+templates/nginx.conf           # 只 include /etc/nginx/conf.d/*.conf
+templates/nginx-site.conf      # Reality 占用 443 时，nginx 只听 80
+templates/nginx-cf-site.conf   # Cloudflare 源站：80 跳转 + 443 反代
 templates/sshd-hardening.conf
 templates/reality-dest-check.service
 templates/reality-dest-check.timer
@@ -163,8 +165,64 @@ systemctl enable --now ipv6-mss-clamp.service
 
 - **第二台机器当备份。** 不同国家、不同 ASN，比在同一家反复付费换 IP 稳。1 核 1–2GB 内存足够跑 Xray。
 - **防火墙只放行 SSH 和 443。** Reality 不占用 80。
+- **域名黑名单。** 在 `routing.rules` 里用 `domain:example.com` 指向 `blackhole`（tag `blocked`）。已预置 pornhub / xvideos；要加站点把域名写进同一条规则即可。依赖入站 sniffing 读 SNI。
 
-## 旧方案：VLESS + WS + TLS
+## IPv4 被墙后：Cloudflare + VLESS + WS / gRPC
+
+Reality **不能** 放在 CDN 后面（握手必须直连源站）。源站 IPv4 被干扰后，改成客户端只连 Cloudflare，源站只给 Cloudflare 回源。
+
+Xray 只听本机：`127.0.0.1:10000`（WS）、`127.0.0.1:10001`（gRPC）。nginx 对外听 80/443，用自签或 Cloudflare Origin CA 证书。域名必须和注册局拼写一致；写错一个字母就是 NXDOMAIN，客户端会一直失败。
+
+### 1. Cloudflare
+
+- 域名 NS 指到 Overview 里那两个 `*.ns.cloudflare.com`（在注册商 Custom DNS 填写，不是在 Cloudflare 里再配一遍 NS）。
+- `vpn`（或你的主机名）A 记录指向源站 IPv4，**橙色云**。
+- SSL/TLS 选 **完整（Full）**。源站是自签证书时不要选「严格」，也不要留在「自动」。
+- 用 gRPC 时在 Network 里打开 gRPC；WebSocket 默认可用。
+
+### 2. 源站
+
+```bash
+cp templates/config-cf-ws-grpc.json /usr/local/etc/xray/config.json
+# 填 UUID、WS path、gRPC serviceName（随机长字符串，不要用 /ws）
+xray run -test -config /usr/local/etc/xray/config.json
+systemctl restart xray
+
+# 本仓库 nginx.conf 只加载 conf.d，写到 sites-enabled 不会生效
+cp templates/nginx.conf /etc/nginx/nginx.conf
+cp templates/nginx-cf-site.conf /etc/nginx/conf.d/vpn.conf
+nginx -t && systemctl reload nginx
+```
+
+源站自签证书示例：
+
+```bash
+mkdir -p /etc/ssl/cloudflare-origin
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -keyout /etc/ssl/cloudflare-origin/vpn.key \
+  -out /etc/ssl/cloudflare-origin/vpn.crt \
+  -subj "/CN=YOUR_DOMAIN"
+```
+
+放开 80 和 443（Cloudflare 回源要用）。Reality 的 dest 健康检查可以停掉：`systemctl disable --now reality-dest-check.timer`。
+
+本机自检：`ss` 里 nginx 必须有 `:443`；`https://YOUR_DOMAIN/` 经 Cloudflare 应返回 **404** 且带 `cf-ray`。
+
+### 3. 客户端（V2rayU 5.x）
+
+- **不要** 填 Vision / `flow`
+- 指纹可用 **chrome**
+- 关掉 Mux
+- 关掉「允许不安全连接」（证书是 Cloudflare 的，不是源站自签）
+- 用 **PAC / 系统代理**；不要和 Clash/FLClash 同时开
+- 先测 WS，再测 gRPC
+
+```text
+vless://YOUR_UUID@YOUR_DOMAIN:443?encryption=none&security=tls&sni=YOUR_DOMAIN&fp=chrome&type=ws&host=YOUR_DOMAIN&path=%2FYOUR_WS_PATH#CF-WS
+vless://YOUR_UUID@YOUR_DOMAIN:443?encryption=none&security=tls&sni=YOUR_DOMAIN&fp=chrome&type=grpc&serviceName=YOUR_GRPC_SERVICE&authority=YOUR_DOMAIN#CF-gRPC
+```
+
+## 旧方案：直连源站的 VLESS + WS + TLS
 
 需要自己的域名和证书，nginx 反代 WebSocket。官方已不推荐 WS。
 
@@ -203,7 +261,7 @@ sudo bash xray-plus.sh
 - Xray 程序：`/usr/local/bin/xray`
 - Reality 链接脚本：`/root/xray.sh`
 - 伪装站检查：`/usr/local/sbin/reality-dest-check.sh`
-- Nginx：`/etc/nginx/nginx.conf`、`/etc/nginx/conf.d/`
+- Nginx：`/etc/nginx/nginx.conf`、`/etc/nginx/conf.d/`（不要用 `sites-enabled`，本仓库主配置不会加载它）
 
 ## License
 

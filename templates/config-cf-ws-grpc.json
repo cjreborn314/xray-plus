@@ -1,0 +1,93 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 10000,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "YOUR_UUID"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "none",
+        "wsSettings": {
+          "path": "/YOUR_WS_PATH"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": false
+      }
+    },
+    {
+      "listen": "127.0.0.1",
+      "port": 10001,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "YOUR_UUID"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "security": "none",
+        "grpcSettings": {
+          "serviceName": "YOUR_GRPC_SERVICE"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": false
+      }
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "domain": [
+          "domain:pornhub.com",
+          "domain:pornhub.org",
+          "domain:pornhubpremium.com",
+          "domain:xvideos.com",
+          "domain:xvideos.es"
+        ],
+        "outboundTag": "blocked"
+      }
+    ]
+  },
+  "outbounds": [
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "UseIPv4"
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpNoDelay": true,
+          "tcpCongestion": "bbr",
+          "tcpKeepAliveIdle": 30
+        }
+      }
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "blocked"
+    }
+  ]
+}

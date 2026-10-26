@@ -44,8 +44,25 @@
       }
     }
   ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "domain": [
+          "domain:pornhub.com",
+          "domain:pornhub.org",
+          "domain:pornhubpremium.com",
+          "domain:xvideos.com",
+          "domain:xvideos.es"
+        ],
+        "outboundTag": "blocked"
+      }
+    ]
+  },
   "outbounds": [
     {
+      "tag": "direct",
       "protocol": "freedom",
       "settings": {
         "domainStrategy": "UseIPv4"
